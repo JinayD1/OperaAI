@@ -142,7 +142,7 @@ async def run(
         system=system,
         schema=DIAGNOSIS_SCHEMA,
         schema_name="diagnosis",
-        max_tokens=8000,
+        max_tokens=settings.diagnose_max_tokens,
         has_pdf=has_manual,
         reasoning=reasoning,
         timeout=settings.diagnose_timeout_s,

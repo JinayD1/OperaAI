@@ -31,10 +31,13 @@ class Settings(BaseSettings):
     # eval/diagnose_configs.py for the measurements behind any change.
     diagnose_manual_via_url: bool = False
     diagnose_reasoning_effort: Optional[str] = None  # "low" | "medium" | "high"
-    # Above the slowest normal diagnosis (p90 ~110s). The old 180s client
-    # timeout sat close enough to real latencies to cut off calls that would
-    # have finished, and a retry then starts the whole call from zero.
+    # Must clear the slowest normal diagnosis with margin: a timeout triggers a
+    # retry, and a retry restarts the whole call from zero.
     diagnose_timeout_s: float = 300.0
+    # Reasoning tokens count against max_tokens, so a tight cap can leave no
+    # room for the answer itself - an unparseable response and a full retry.
+    # A higher cap doesn't change how the model reasons, only whether it's cut off.
+    diagnose_max_tokens: int = 24000
 
     # --- persistence ---
     database_url: str = ""

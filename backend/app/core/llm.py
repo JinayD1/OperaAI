@@ -188,7 +188,17 @@ class LLM:
         }
 
         if schema:
-            return _parse_json(content), usage
+            try:
+                return _parse_json(content), usage
+            except LLMError as e:
+                # Record why: finish_reason "length" with most of the budget spent
+                # on reasoning means the answer never started - raise max_tokens,
+                # don't retry with the same limit.
+                raise LLMError(
+                    f"{e} [finish={usage.get('finish_reason')} "
+                    f"completion={usage.get('completion_tokens')} "
+                    f"reasoning={usage.get('reasoning_tokens')} max_tokens={max_tokens}]"
+                ) from None
         return content, usage
 
 

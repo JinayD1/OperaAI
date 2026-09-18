@@ -78,22 +78,28 @@ async def page_texts(data: bytes) -> list[str]:
         _TEXT.move_to_end(sha)
         return _TEXT[sha]
 
-    manual_id = await db.fetchval("SELECT manual_id FROM manuals WHERE pdf_sha256=$1", sha)
-    if manual_id:
-        try:
+    # Stored text is a cache, never a dependency: with no database or bucket to
+    # hand, extract and carry on rather than fail a stage that works without it.
+    manual_id: Optional[str] = None
+    try:
+        manual_id = await db.fetchval("SELECT manual_id FROM manuals WHERE pdf_sha256=$1", sha)
+        if manual_id:
             stored = json.loads(await storage.download(text_key(manual_id)))
             if stored.get("sha256") == sha and stored.get("extractor") == TEXT_EXTRACTOR:
                 return _remember(_TEXT, sha, stored["pages"])
-        except Exception:
-            pass  # not stored yet: extract below
+    except Exception:
+        pass
 
     texts = await asyncio.to_thread(extract_texts, data)
     if manual_id:
-        await storage.upload(
-            text_key(manual_id),
-            json.dumps({"sha256": sha, "extractor": TEXT_EXTRACTOR, "pages": texts}).encode(),
-            "application/json",
-        )
+        try:
+            await storage.upload(
+                text_key(manual_id),
+                json.dumps({"sha256": sha, "extractor": TEXT_EXTRACTOR, "pages": texts}).encode(),
+                "application/json",
+            )
+        except Exception:
+            pass
     return _remember(_TEXT, sha, texts)
 
 
