@@ -16,6 +16,7 @@ import base64
 import json
 import mimetypes
 import re
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -61,6 +62,15 @@ def pdf_part(data: bytes, filename: str = "manual.pdf") -> dict[str, Any]:
     }
 
 
+def pdf_url_part(url: str, filename: str = "manual.pdf") -> dict[str, Any]:
+    """Reference a PDF by URL instead of inlining its bytes.
+
+    The provider fetches it from storage directly, so a 16 MB manual is not
+    re-uploaded from this process on every call. Pass a presigned S3 URL.
+    """
+    return {"type": "file", "file": {"filename": filename, "file_data": url}}
+
+
 def pdf_part_from_path(path: str | Path) -> dict[str, Any]:
     p = Path(path)
     return pdf_part(p.read_bytes(), filename=p.name)
@@ -100,6 +110,8 @@ class LLM:
         max_tokens: int = 8000,
         temperature: float = 0.2,
         has_pdf: bool = False,
+        reasoning: Optional[dict[str, Any]] = None,
+        timeout: Optional[float] = None,
     ) -> tuple[Any, dict[str, Any]]:
         """Send one request. Returns (content, usage).
 
@@ -131,6 +143,11 @@ class LLM:
                 "json_schema": {"name": schema_name, "strict": True, "schema": schema},
             }
 
+        if reasoning:
+            # e.g. {"effort": "low"} or {"max_tokens": 2048}; OpenRouter maps it
+            # onto the provider's thinking budget.
+            body["reasoning"] = reasoning
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -139,8 +156,13 @@ class LLM:
             "X-Title": "Opera AI",
         }
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post(OPENROUTER_URL, json=body, headers=headers)
+        encoded = json.dumps(body).encode()
+        started = time.monotonic()
+        async with httpx.AsyncClient(timeout=timeout or self.timeout) as client:
+            resp = await client.post(
+                OPENROUTER_URL, content=encoded, headers=headers
+            )
+        elapsed = time.monotonic() - started
 
         if resp.status_code != 200:
             raise LLMError(f"openrouter {resp.status_code}: {resp.text[:500]}")
@@ -151,7 +173,19 @@ class LLM:
 
         choice = payload["choices"][0]["message"]
         content = choice.get("content") or ""
-        usage = payload.get("usage", {}) | {"model": payload.get("model", model)}
+        raw_usage = payload.get("usage", {})
+        details = raw_usage.get("completion_tokens_details") or {}
+        # Timing and size recorded on every call. Without them a slow stage
+        # can't be attributed to upload, reasoning or provider queueing.
+        usage = raw_usage | {
+            "model": payload.get("model", model),
+            "latency_s": round(elapsed, 2),
+            "request_mb": round(len(encoded) / 1e6, 2),
+            "reasoning_tokens": details.get("reasoning_tokens"),
+            # "length" means the output hit max_tokens; with a JSON schema that
+            # is a truncated, unparseable response and a full-cost retry.
+            "finish_reason": payload["choices"][0].get("finish_reason"),
+        }
 
         if schema:
             return _parse_json(content), usage

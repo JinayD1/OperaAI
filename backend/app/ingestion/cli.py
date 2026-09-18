@@ -22,7 +22,7 @@ import re
 import sys
 from pathlib import Path
 
-from app.core import db, llm, pdf, storage
+from app.core import db, llm, manuals, pdf, storage
 
 # Where the relevant tables tend to live. Front matter carries the safety
 # scope; the nomenclature table is conventionally on the last page or two.
@@ -230,6 +230,10 @@ async def ingest(path: Path, brand_hint: str | None, force: bool) -> None:
         )
         rows += 1
 
+    print("  storing per-page text...")
+    texts = await manuals.page_texts(data)
+    print(f"    {len(texts)} pages -> s3://{manuals.text_key(manual_id)}")
+
     cost = (u1.get("cost") or 0) + (u2.get("cost") or 0)
     print(f"  done: manual_id={manual_id}, {rows} catalog rows, ingest cost ${cost:.4f}")
 
@@ -245,6 +249,9 @@ async def main() -> int:
 
     sub.add_parser("list", help="show ingested manuals")
 
+    tx = sub.add_parser("text", help="store per-page text for an already-ingested manual")
+    tx.add_argument("manual_id")
+
     args = ap.parse_args()
     await db.init_pool()
     try:
@@ -254,6 +261,9 @@ async def main() -> int:
                 print(f"no such file: {p}", file=sys.stderr)
                 return 1
             await ingest(p, args.brand, args.force)
+        elif args.cmd == "text":
+            texts = await manuals.page_texts(await manuals.pdf_bytes(args.manual_id))
+            print(f"{args.manual_id}: {len(texts)} pages stored at s3://{manuals.text_key(args.manual_id)}")
         else:
             for r in await db.fetch(
                 """SELECT m.manual_id, m.brand, m.page_count,

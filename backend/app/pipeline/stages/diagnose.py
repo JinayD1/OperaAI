@@ -100,17 +100,37 @@ async def run(
     *,
     error_code: Optional[str] = None,
     images: Optional[list[tuple[bytes, str]]] = None,
+    manual_url: Optional[str] = None,
+    page_numbers: Optional[list[int]] = None,
+    model: Optional[str] = None,
+    reasoning: Optional[dict[str, Any]] = None,
 ) -> tuple[RepairSummary, dict[str, Any]]:
-    """Returns (summary, usage). Without a manual, the result is ungrounded."""
+    """Returns (summary, usage). Without a manual, the result is ungrounded.
+
+    `manual_url`: have the provider fetch the manual itself instead of inlining
+    ~22 MB of base64 from this process on every call.
+    `page_numbers`: set when `manual_pdf` is an excerpt, so citations use the
+    manual's own page numbers rather than positions in the excerpt.
+    """
+    has_manual = bool(manual_pdf or manual_url)
     parts: list[dict[str, Any]] = []
-    if manual_pdf:
+    if manual_url:
+        parts.append(llm.pdf_url_part(manual_url, "manual.pdf"))
+    elif manual_pdf:
         parts.append(llm.pdf_part(manual_pdf, "manual.pdf"))
     for data, mime in images or []:
         parts.append(llm.image_part(data, mime))
-    parts.append(llm.text_part(_user_prompt(identity, symptom, error_code)))
+    prompt = _user_prompt(identity, symptom, error_code)
+    if page_numbers:
+        prompt += (
+            "\n\nThe attached PDF is an excerpt. Its pages are, in order, manual pages "
+            + ", ".join(str(n) for n in page_numbers)
+            + ". Cite those manual page numbers, not positions in the excerpt."
+        )
+    parts.append(llm.text_part(prompt))
 
     system = SYSTEM
-    if not manual_pdf:
+    if not has_manual:
         system += (
             "\nNO MANUAL IS AVAILABLE for this appliance. Answer from general "
             "knowledge, leave manual_pages empty, and keep confidence low."
@@ -118,12 +138,14 @@ async def run(
 
     data, usage = await llm.llm.complete(
         parts,
-        model=settings.model_diagnose,
+        model=model or settings.model_diagnose,
         system=system,
         schema=DIAGNOSIS_SCHEMA,
         schema_name="diagnosis",
         max_tokens=8000,
-        has_pdf=bool(manual_pdf),
+        has_pdf=has_manual,
+        reasoning=reasoning,
+        timeout=settings.diagnose_timeout_s,
     )
 
     causes = [
@@ -148,7 +170,7 @@ async def run(
             abstain_reason=data.get("abstain_reason"),
             clarifying_questions=data.get("clarifying_questions") or [],
             requested_photos=data.get("requested_photos") or [],
-            grounded=bool(manual_pdf) and any(c.manual_pages for c in causes),
+            grounded=has_manual and any(c.manual_pages for c in causes),
         ),
         usage,
     )

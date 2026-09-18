@@ -283,7 +283,9 @@ def test_parts_text_admits_numbers_are_unavailable():
 def test_instruct_failure_falls_back_to_the_diagnosis():
     steps = next(e for e in translate(full_run(instruct_ok=False), "ready")
                  if e["type"] == "synthesis_complete")["steps"]
-    assert any(s["instruction"].startswith("Likely cause:") for s in steps)
+    text = [s["instruction"] for s in steps]
+    assert any(s.startswith("Most likely cause:") for s in text)
+    assert any(s.startswith("Other possible cause:") for s in text)
 
 
 def test_parts_failure_falls_back_to_components_named_in_diagnosis():
@@ -308,3 +310,39 @@ def test_input_rejects_an_empty_symptom():
 
     with pytest.raises(HTTPException):
         _InputBody(description="   ").normalized()
+
+
+def test_diagnosis_is_step_two_under_a_technician_verdict():
+    steps = next(e for e in translate(full_run(), "ready")
+                 if e["type"] == "synthesis_complete")["steps"]
+    assert steps[1]["instruction"].startswith("Most likely cause:")
+
+
+def test_instruct_finishing_first_still_shows_the_real_parts_list():
+    """Parts and instruct run concurrently; instruct may land first."""
+    events = full_run()
+    parts_ev = next(e for e in events if e["type"] == "stage_completed"
+                    and e["payload"]["stage"] == "parts")
+    instr_ev = next(e for e in events if e["type"] == "stage_completed"
+                    and e["payload"]["stage"] == "instruct")
+    i, j = events.index(parts_ev), events.index(instr_ev)
+    events[i], events[j] = events[j], events[i]
+    ui = translate(events, "ready")
+    gate = next(e for e in ui if e["type"] == "parts_check_complete")
+    assert "Gas valve" in gate["parts"], "fallback text shown instead of the real parts list"
+    assert [e["type"] for e in ui].index("parts_check_complete") < \
+           [e["type"] for e in ui].index("synthesis_complete")
+    assert FrontendPhaseModel().run(ui).phase == "COMPLETE"
+
+
+def test_instruct_error_before_parts_waits_for_parts():
+    events = [e for e in full_run(instruct_ok=False)]
+    parts_ev = next(e for e in events if e["type"] == "stage_completed"
+                    and e["payload"]["stage"] == "parts")
+    err = next(e for e in events if e["type"] == "error" and e["payload"]["stage"] == "instruct")
+    i, j = events.index(parts_ev), events.index(err)
+    events[i], events[j] = events[j], events[i]
+    ui = translate(events, "ready")
+    gate = next(e for e in ui if e["type"] == "parts_check_complete")
+    assert "Gas valve" in gate["parts"]
+    assert FrontendPhaseModel().run(ui).phase == "COMPLETE"

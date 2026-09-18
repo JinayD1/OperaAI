@@ -29,7 +29,7 @@ from typing import Any, Awaitable, Callable, Optional, TypeVar
 import asyncpg
 
 from app.config import settings
-from app.core import db, storage
+from app.core import db, manuals, storage
 from app.pipeline import safety
 from app.pipeline.stages import diagnose, identify
 from app.pipeline.stages import instruct as instruct_stage
@@ -457,7 +457,11 @@ async def run_case(case_id: str) -> dict[str, Any]:
         else:
             await emit(case_id, "stage_started", {"stage": StageName.DIAGNOSE.value})
             images = await _load_images(assets)
-            manual_pdf = await storage.download(manual["pdf_path"]) if manual else None
+            manual_pdf = (await manuals.pdf_bytes(manual["manual_id"], manual["pdf_path"])
+                          if manual else None)
+            manual_url = (await storage.create_signed_download_url(manual["pdf_path"], ttl=1800)
+                          if manual and settings.diagnose_manual_via_url else None)
+            effort = settings.diagnose_reasoning_effort
 
             async def _diagnose():
                 return await diagnose.run(
@@ -466,6 +470,8 @@ async def run_case(case_id: str) -> dict[str, Any]:
                     case["symptom"],
                     error_code=case.get("error_code"),
                     images=images,
+                    manual_url=manual_url,
+                    reasoning={"effort": effort} if effort else None,
                 )
 
             summary, usage = await with_retry(_diagnose)
@@ -499,7 +505,7 @@ async def run_case(case_id: str) -> dict[str, Any]:
     # and instructions instead of failing both on an undefined name.
     summary = RepairSummary.model_validate(summary_payload)
     if manual_pdf is None and manual:
-        manual_pdf = await storage.download(manual["pdf_path"])
+        manual_pdf = await manuals.pdf_bytes(manual["manual_id"], manual["pdf_path"])
 
     try:
         summary = await parts_stage.verify_summary(summary, manual_pdf)
@@ -514,15 +520,12 @@ async def run_case(case_id: str) -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         log.warning("verification failed for %s: %s", case_id, e)
 
-    for stage_name, coro_factory in (
-        (StageName.PARTS, lambda: parts_stage.run(manual_pdf, ident, summary)),
-        (StageName.INSTRUCT, lambda: instruct_stage.run(manual_pdf, ident, summary, assessment)),
-    ):
+    async def _aux(stage_name: StageName, factory) -> Optional[dict[str, Any]]:
         try:
             if not await claim_stage(case_id, stage_name):
-                continue
+                return None
             await emit(case_id, "stage_started", {"stage": stage_name.value})
-            result, usage = await with_retry(coro_factory)
+            result, usage = await with_retry(factory)
             payload = json.loads(result.model_dump_json())
             await record_stage(
                 case_id,
@@ -531,12 +534,19 @@ async def run_case(case_id: str) -> dict[str, Any]:
             )
             await emit(case_id, "stage_completed",
                        {"stage": stage_name.value, "output": payload, "usage": usage})
-            if stage_name is StageName.PARTS:
-                parts_payload = payload
-            else:
-                instructions_payload = payload
+            return payload
         except Exception as e:  # noqa: BLE001
             await _fail_stage(case_id, stage_name, e)
+            return None
+
+    # Instructions take the diagnosis and the safety verdict, never the parts
+    # list, so the two run concurrently. Each records its own outcome; the
+    # frontend translator waits for both before finishing the result screen.
+    parts_payload, instructions_payload = await asyncio.gather(
+        _aux(StageName.PARTS, lambda: parts_stage.run(manual_pdf, ident, summary)),
+        _aux(StageName.INSTRUCT,
+             lambda: instruct_stage.run(manual_pdf, ident, summary, assessment)),
+    )
 
     await _set_case_status(case_id, CaseStatus.READY)
 

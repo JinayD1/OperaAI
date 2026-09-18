@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Optional
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,6 +26,15 @@ class Settings(BaseSettings):
     model_default: str = "google/gemini-2.5-flash"
     # Cheap verification and schema-conversion passes.
     model_cheap: str = "google/gemini-2.5-flash-lite"
+
+    # Diagnosis tuning. Defaults reproduce the original behaviour; see
+    # eval/diagnose_configs.py for the measurements behind any change.
+    diagnose_manual_via_url: bool = False
+    diagnose_reasoning_effort: Optional[str] = None  # "low" | "medium" | "high"
+    # Above the slowest normal diagnosis (p90 ~110s). The old 180s client
+    # timeout sat close enough to real latencies to cut off calls that would
+    # have finished, and a retry then starts the whole call from zero.
+    diagnose_timeout_s: float = 300.0
 
     # --- persistence ---
     database_url: str = ""

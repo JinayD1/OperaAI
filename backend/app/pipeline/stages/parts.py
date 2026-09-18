@@ -31,7 +31,7 @@ from urllib.parse import quote_plus
 from pypdf import PdfReader
 
 from app.config import settings
-from app.core import llm, pdf
+from app.core import llm, manuals, pdf
 from app.pipeline import verify as verify_pass
 from app.schemas.contracts import ApplianceIdentity, Part, PartsList, RepairSummary
 
@@ -110,30 +110,6 @@ Rules you must follow:
 # --------------------------------------------------------------------------
 
 
-_TEXT_CACHE: dict[str, list[str]] = {}
-
-
-def _page_texts(pdf_bytes: bytes) -> list[str]:
-    """Per-page extracted text, cached per document.
-
-    Pulling text out of the 74-page Carrier manual takes ~25 seconds, and both
-    this stage and the verifier want the same strings, so it is worth keeping.
-    """
-    key = hashlib.sha256(pdf_bytes).hexdigest()
-    if key not in _TEXT_CACHE:
-        reader = PdfReader(io.BytesIO(pdf_bytes))
-        out = []
-        for page in reader.pages:
-            try:
-                out.append(page.extract_text() or "")
-            except Exception:
-                out.append("")
-        if len(_TEXT_CACHE) > 4:
-            _TEXT_CACHE.clear()
-        _TEXT_CACHE[key] = out
-    return _TEXT_CACHE[key]
-
-
 def _alnum(s: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (s or "").upper())
 
@@ -204,7 +180,8 @@ async def verify_summary(summary: RepairSummary, manual_pdf: Optional[bytes]) ->
     """
     if not manual_pdf or not summary.causes:
         return summary
-    report = await asyncio.to_thread(verify_pass.verify, summary, manual_pdf)
+    texts = await manuals.page_texts(manual_pdf)
+    report = await asyncio.to_thread(verify_pass.verify, summary, manual_pdf, texts)
     for cause, check in zip(summary.causes, report.causes):
         cause.verified = check.supported
     return summary
@@ -261,10 +238,11 @@ async def run(
         # model to read. Fall back to the components the diagnosis already named.
         return _from_components(identity, summary), {}
 
-    texts = _page_texts(manual_pdf)
+    texts = await manuals.page_texts(manual_pdf)
     page_count = len(texts)
     pages = relevant_pages(summary, page_count, extra=_parts_guide_pages(texts))
-    excerpt = pdf.extract_pages(manual_pdf, pages) if pages else manual_pdf
+    excerpt = (await asyncio.to_thread(pdf.extract_pages, manual_pdf, pages)
+               if pages else manual_pdf)
 
     parts_msg = [
         llm.pdf_part(excerpt, "manual-excerpt.pdf"),

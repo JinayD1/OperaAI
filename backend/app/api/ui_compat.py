@@ -93,6 +93,11 @@ class UiTranslator:
         self.sent_parts_gate = False
         self.sent_synthesis = False
         self.sent_error = False
+        # Parts and instructions run concurrently; the result screen is only
+        # built once both have settled, or the parts gate would fire with a
+        # fallback before the real parts list arrived.
+        self.parts_settled = False
+        self.instruct_settled = False
 
     @property
     def finished(self) -> bool:
@@ -153,11 +158,11 @@ class UiTranslator:
             output = payload.get("output") or {}
             if stage == "parts":
                 self.parts = output
-                out += self._parts_gate()
+                self.parts_settled = True
             elif stage == "instruct":
                 self.instructions = output
-                out += self._parts_gate()  # no-op if already sent
-                out += self._synthesis()
+                self.instruct_settled = True
+            out += self._maybe_finish()
 
         elif etype == "error":
             # Only a failure before diagnosis is fatal. Parts or instructions
@@ -165,6 +170,12 @@ class UiTranslator:
             stage = payload.get("stage")
             if stage in (None, "identify", "diagnose") and not self.summary:
                 out += self._fail(payload.get("error") or "The analysis failed.")
+            elif stage == "parts":
+                self.parts_settled = True
+                out += self._maybe_finish()
+            elif stage == "instruct":
+                self.instruct_settled = True
+                out += self._maybe_finish()
 
         return out
 
@@ -175,6 +186,14 @@ class UiTranslator:
         if case_status == "failed" and not self.summary:
             return self._fail("The analysis could not be completed.")
         return self._parts_gate() + self._synthesis()
+
+    def _maybe_finish(self) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        if self.parts_settled:
+            out += self._parts_gate()
+        if self.parts_settled and self.instruct_settled:
+            out += self._synthesis()
+        return out
 
     # -- builders ---------------------------------------------------------
 
@@ -249,6 +268,16 @@ class UiTranslator:
                 line += f' The manufacturer states: "{scope.strip()}"{_pages(self.safety.get("manual_pages"))}'
             instructions.append(line)
 
+        causes = self.summary.get("causes") or []
+        if self.summary.get("abstained"):
+            reason = self.summary.get("abstain_reason") or "the evidence was not conclusive"
+            instructions.append(f"No confident diagnosis: {reason.strip()}")
+        elif causes:
+            # What is wrong leads; the checks and the brief follow it. Otherwise
+            # the one specific finding sits at the bottom under generic steps.
+            top = causes[0]
+            instructions.append(f"Most likely cause: {top['summary']}{_pages(top.get('manual_pages'))}")
+
         steps = instr.get("steps") or []
         if steps:
             for s in steps:
@@ -268,8 +297,8 @@ class UiTranslator:
             # only one that persists - would say "call a technician" and list
             # generic checks without ever saying what is actually wrong; the
             # diagnosis would have flashed past in phase 2 and been lost.
-            for c in (self.summary.get("causes") or [])[:3]:
-                instructions.append(f"Likely cause: {c['summary']}{_pages(c.get('manual_pages'))}")
+            for c in causes[1:3]:
+                instructions.append(f"Other possible cause: {c['summary']}{_pages(c.get('manual_pages'))}")
 
         if not instructions:
             instructions = ["No repair guidance could be produced for this case."]

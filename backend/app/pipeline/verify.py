@@ -126,11 +126,17 @@ def _contains(haystack: str, needle: str) -> tuple[bool, float]:
     return False, best
 
 
-def verify(summary, pdf_bytes: bytes) -> VerificationReport:
-    """`summary` is a RepairSummary (or anything with .causes)."""
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    total = len(reader.pages)
-    cache: dict[int, str] = {}
+def verify(summary, pdf_bytes: bytes, page_texts: Optional[list[str]] = None) -> VerificationReport:
+    """`summary` is a RepairSummary (or anything with .causes).
+
+    Pass `page_texts` when you have them (they are stored at ingestion); the
+    fallback extracts from `pdf_bytes`, which on a large manual is slow.
+    """
+    reader = None if page_texts is not None else PdfReader(io.BytesIO(pdf_bytes))
+    total = len(page_texts) if page_texts is not None else len(reader.pages)
+    cache: dict[int, str] = (
+        {i: _norm(tx) for i, tx in enumerate(page_texts, start=1)} if page_texts is not None else {}
+    )
 
     def text(page: int) -> str:
         if page not in cache:
