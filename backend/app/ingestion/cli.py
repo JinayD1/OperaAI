@@ -18,11 +18,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import json
 import re
 import sys
 from pathlib import Path
 
 from app.core import db, llm, manuals, pdf, storage
+from app.ingestion import pages as pages_index
 
 # Where the relevant tables tend to live. Front matter carries the safety
 # scope; the nomenclature table is conventionally on the last page or two.
@@ -252,6 +254,11 @@ async def main() -> int:
     tx = sub.add_parser("text", help="store per-page text for an already-ingested manual")
     tx.add_argument("manual_id")
 
+    sub.add_parser("migrate", help="apply migrations/*.sql")
+
+    idx = sub.add_parser("index", help="build the page-level retrieval index for an ingested manual")
+    idx.add_argument("path")
+
     args = ap.parse_args()
     await db.init_pool()
     try:
@@ -264,6 +271,19 @@ async def main() -> int:
         elif args.cmd == "text":
             texts = await manuals.page_texts(await manuals.pdf_bytes(args.manual_id))
             print(f"{args.manual_id}: {len(texts)} pages stored at s3://{manuals.text_key(args.manual_id)}")
+        elif args.cmd == "migrate":
+            await db.migrate()
+            print("migrations applied")
+        elif args.cmd == "index":
+            data = Path(args.path).read_bytes()
+            sha = hashlib.sha256(data).hexdigest()
+            row = await db.fetchrow("SELECT manual_id, brand FROM manuals WHERE pdf_sha256=$1", sha)
+            if not row:
+                print(f"{args.path} is not ingested yet - run `add` first", file=sys.stderr)
+                return 1
+            print(f"indexing {row['manual_id']} ...")
+            report = await pages_index.index_manual(row["manual_id"], data, row["brand"])
+            print(json.dumps(report, indent=2))
         else:
             for r in await db.fetch(
                 """SELECT m.manual_id, m.brand, m.page_count,

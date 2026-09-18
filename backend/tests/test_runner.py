@@ -368,7 +368,7 @@ async def test_run_case_orchestration_emits_the_full_event_contract(case_id, mon
         return ApplianceIdentity(brand="Carrier", model_number="59SC6A",
                                  appliance_type="furnace", confidence=0.9), {"cost": 0.01}
 
-    async def fake_diagnose(manual_pdf, identity, symptom, *, error_code=None, images=None):
+    async def fake_diagnose(manual_pdf, identity, symptom, *, error_code=None, images=None, **_):
         calls["diagnose"] += 1
         return RepairSummary(symptom_restated=symptom, causes=[]), {"cost": 0.06}
 

@@ -29,9 +29,10 @@ from typing import Any, Awaitable, Callable, Optional, TypeVar
 import asyncpg
 
 from app.config import settings
-from app.core import db, manuals, storage
+from app.core import db, manuals, pdf, storage
 from app.pipeline import safety
 from app.pipeline.stages import diagnose, identify
+from app.pipeline.stages import retrieve as retrieve_stage
 from app.pipeline.stages import instruct as instruct_stage
 from app.pipeline.stages import parts as parts_stage
 from app.schemas.contracts import (
@@ -441,7 +442,12 @@ async def run_case(case_id: str) -> dict[str, Any]:
         assets=assets,
         manual_id=ident.manual_id,
         model=settings.model_diagnose,
-        extra={"identity": ident.model_normalized or "", "level": ident.identity_level.value},
+        extra={
+            "identity": ident.model_normalized or "",
+            "level": ident.identity_level.value,
+            # Retrieval changes what diagnose reads, so it must change the hash.
+            "retrieval": settings.retrieval_top_k if settings.retrieval_enabled else 0,
+        },
     )
     manual_pdf: Optional[bytes] = None
     try:
@@ -463,18 +469,42 @@ async def run_case(case_id: str) -> dict[str, Any]:
                           if manual and settings.diagnose_manual_via_url else None)
             effort = settings.diagnose_reasoning_effort
 
+            # Retrieval narrows what diagnose reads to the top-k manual pages.
+            # Any failure or an empty result falls back to the full manual:
+            # slower, never worse. Flag off makes exactly the original call.
+            retrieved = None
+            if settings.retrieval_enabled and manual_pdf:
+                try:
+                    retrieved = await retrieve_stage.run(
+                        ident.manual_id, ident, case["symptom"],
+                        error_code=case.get("error_code"),
+                    )
+                    await emit(case_id, "retrieval_completed", retrieved.as_dict())
+                except Exception as e:  # noqa: BLE001
+                    log.warning("retrieval failed for %s, using full manual: %s", case_id, e)
+                    await emit(case_id, "retrieval_fallback", {"reason": str(e)[:300]})
+            if retrieved and retrieved.pages:
+                page_numbers = sorted(retrieved.pages)
+                diagnose_doc = pdf.extract_pages(manual_pdf, page_numbers)
+                diagnose_kwargs: dict[str, Any] = {"page_numbers": page_numbers}
+            else:
+                diagnose_doc = manual_pdf
+                diagnose_kwargs = {"manual_url": manual_url}
+
             async def _diagnose():
                 return await diagnose.run(
-                    manual_pdf,
+                    diagnose_doc,
                     ident,
                     case["symptom"],
                     error_code=case.get("error_code"),
                     images=images,
-                    manual_url=manual_url,
                     reasoning={"effort": effort} if effort else None,
+                    **diagnose_kwargs,
                 )
 
             summary, usage = await with_retry(_diagnose)
+            if retrieved:
+                usage = usage | {"retrieval": retrieved.as_dict()}
             summary.safety = assessment
             summary_payload = json.loads(summary.model_dump_json())
             await record_stage(

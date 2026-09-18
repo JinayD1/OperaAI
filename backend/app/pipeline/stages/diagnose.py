@@ -125,7 +125,9 @@ async def run(
         prompt += (
             "\n\nThe attached PDF is an excerpt. Its pages are, in order, manual pages "
             + ", ".join(str(n) for n in page_numbers)
-            + ". Cite those manual page numbers, not positions in the excerpt."
+            + ". Cite those manual page numbers, not positions in the excerpt. "
+            "If these pages do not cover the symptom, say so and abstain rather "
+            "than guessing."
         )
     parts.append(llm.text_part(prompt))
 
@@ -142,7 +144,7 @@ async def run(
         system=system,
         schema=DIAGNOSIS_SCHEMA,
         schema_name="diagnosis",
-        max_tokens=8000,
+        max_tokens=settings.diagnose_max_tokens,
         has_pdf=has_manual,
         reasoning=reasoning,
         timeout=settings.diagnose_timeout_s,
@@ -153,7 +155,11 @@ async def run(
             summary=c["summary"],
             detail=c.get("detail"),
             confidence=float(c.get("confidence") or 0.0),
-            manual_pages=c.get("manual_pages") or [],
+            # On an excerpt, a page that was never sent cannot have been read.
+            manual_pages=[
+                p for p in (c.get("manual_pages") or [])
+                if not page_numbers or p in page_numbers
+            ],
             evidence=c.get("evidence") or [],
             error_codes=c.get("error_codes") or [],
             components=c.get("components") or [],
