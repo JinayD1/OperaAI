@@ -1,6 +1,5 @@
 import sharp from "sharp";
-import { genai } from "../gemini";
-import { Type } from "@google/genai";
+import { genai, Type } from "../gemini";
 import type { Observation } from "./types";
 import { generateObservationId } from "./types";
 import { getSession, runInference, float32Tensor, softmax, argmax, getFloat32Output } from "./onnx-inference";

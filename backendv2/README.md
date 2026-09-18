@@ -16,10 +16,14 @@ Processing API server for the Opera AI diagnostic pipeline. Handles image upload
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GEMINI_API_KEY` | Yes | Google AI (Gemini) API key |
+| `OPENROUTER_API_KEY` | Yes | OpenRouter API key (all model calls route through OpenRouter) |
+| `OPENROUTER_MODEL` | No | Override the model, e.g. `google/gemini-2.5-flash` (the default) |
 | `CLOUDINARY_CLOUD_NAME` | Yes | Cloudinary cloud name |
 | `CLOUDINARY_API_KEY` | Yes | Cloudinary API key |
 | `CLOUDINARY_API_SECRET` | Yes | Cloudinary API secret |
+| `DATABASE_URL` | Yes (cases API) | Postgres connection string |
+| `SUPABASE_URL` | Yes (uploads) | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes (uploads) | Supabase service-role key (server-side only) |
 
 ## Run
 

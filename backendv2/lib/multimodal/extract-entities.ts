@@ -1,5 +1,4 @@
-import { genai } from "../gemini";
-import { Type } from "@google/genai";
+import { genai, Type } from "../gemini";
 import { parseProduct } from "../parse-product";
 import { lookupProduct } from "../lookup-product";
 import type { Observation } from "./types";

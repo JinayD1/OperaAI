@@ -1,7 +1,6 @@
 import sharp from "sharp";
 import { extractText } from "../ocr";
-import { genai } from "../gemini";
-import { Type } from "@google/genai";
+import { genai, Type } from "../gemini";
 import type { Observation, RegionType } from "./types";
 import { generateObservationId } from "./types";
 import { logger } from "../observability";
