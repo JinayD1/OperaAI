@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     model_default: str = "google/gemini-2.5-flash"
     # Cheap verification and schema-conversion passes.
     model_cheap: str = "google/gemini-2.5-flash-lite"
+    # Served through OpenRouter's OpenAI-compatible /embeddings endpoint, so it
+    # rides the same key. 1536 dims - must match manual_pages.embedding.
+    model_embedding: str = "openai/text-embedding-3-small"
+
+    # --- retrieval ---
+    # When on, diagnose reads the top-k retrieved manual pages instead of the
+    # whole PDF. Off keeps the original full-manual behaviour.
+    retrieval_enabled: bool = False
+    retrieval_top_k: int = 8
 
     # Diagnosis tuning. Defaults reproduce the original behaviour; see
     # eval/diagnose_configs.py for the measurements behind any change.
