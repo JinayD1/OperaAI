@@ -14,7 +14,7 @@ brief to hand to a technician.
 Started at Hack Canada 2026. The backend has since been rewritten in FastAPI,
 with a staged job runner, citation verification and an evaluation harness.
 
-## 🏆 Hack Canada 2026
+### 🏆 Hack Canada 2026
 
 - **Winner, Cloudinary Challenge** **(1st of 208 teams)**
 - **Winner, SPUR: Build a Real Canadian Startup (Top 10)**
