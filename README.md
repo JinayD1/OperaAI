@@ -11,8 +11,16 @@ the parts involved and what to do next. If the repair isn't safe for a
 homeowner, it says so, quotes the manual's own words, and gives the user a
 brief to hand to a technician.
 
-Started at HackCanada 2026. The backend has since been rewritten in FastAPI,
+Started at Hack Canada 2026. The backend has since been rewritten in FastAPI,
 with a staged job runner, citation verification and an evaluation harness.
+
+## 🏆 Hack Canada 2026
+
+- **Winner, Cloudinary Challenge**
+- **Winner, SPUR: Build a Real Canadian Startup (Top 10)**
+
+Built by Jinay Desai, Smit Patel, Danny Hu and Yvan Roan.
+See the [Devpost submission](https://devpost.com/software/operaai).
 
 ---
 
