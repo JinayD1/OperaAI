@@ -16,7 +16,7 @@ with a staged job runner, citation verification and an evaluation harness.
 
 ## 🏆 Hack Canada 2026
 
-- **Winner, Cloudinary Challenge**
+- **Winner, Cloudinary Challenge** **(1st of 208 teams)**
 - **Winner, SPUR: Build a Real Canadian Startup (Top 10)**
 
 Built by Jinay Desai, Smit Patel, Danny Hu and Yvan Roan.
